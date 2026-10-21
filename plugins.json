@@ -1,0 +1,22 @@
+[
+    {
+        "iconUrl": "https://www.google.com/s2/favicons?domain=kick.com&sz=%size%",
+        "fileHash": "sha256-4a4440807ae98d44f231e3586741e71e21d11313a7373bd7e847cde5e2ed0356",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/residentialslumber-tech/Kick-cloudstream",
+        "fileSize": 17984,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "you"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "KickProvider",
+        "description": "Watch live streams from Kick.com",
+        "url": "https://raw.githubusercontent.com/residentialslumber-tech/Kick-cloudstream/builds/KickProvider.cs3",
+        "name": "KickProvider"
+    }
+]
