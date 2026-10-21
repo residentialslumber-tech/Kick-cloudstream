@@ -32,7 +32,8 @@ jobs:
 
       - name: Create builds branch if missing
         run: |
-          if [ ! -d builds ]; then
+          if [ ! -d builds/.git ]; then
+            rm -rf builds
             mkdir builds
             cd builds
             git init
@@ -70,5 +71,9 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           git add .
-          git commit --amend -m "Build $GITHUB_SHA" || true
-          git push --force origin builds
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then
+            git commit --amend -m "Build $GITHUB_SHA"
+          else
+            git commit -m "Build $GITHUB_SHA"
+          fi
+          git push --force origin HEAD:builds
