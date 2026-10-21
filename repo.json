@@ -1,0 +1,8 @@
+{
+  "name": "Kick",
+  "description": "Kick.com live streams for CloudStream",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/residentialslumber-tech/Kick-cloudstream/builds/plugins.json"
+  ]
+}
