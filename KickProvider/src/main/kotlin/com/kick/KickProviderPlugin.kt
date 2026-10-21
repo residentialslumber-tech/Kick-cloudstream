@@ -1,11 +1,11 @@
 package com.kick
 
 import android.content.Context
-import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
-class KickProviderPlugin : BasePlugin() {
+class KickProviderPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(KickProvider())
     }
