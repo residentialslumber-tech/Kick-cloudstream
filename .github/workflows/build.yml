@@ -58,7 +58,14 @@ jobs:
       - name: Build plugins
         run: |
           cd $GITHUB_WORKSPACE/src
-          gradle make makePluginsJson
+          set -o pipefail
+          gradle make makePluginsJson --console=plain 2>&1 | tee $GITHUB_WORKSPACE/gradle.log || {
+            echo ""
+            echo "=============== COMPILER ERRORS ==============="
+            grep -E '^e: ' $GITHUB_WORKSPACE/gradle.log || echo "(no 'e:' lines found)"
+            echo "==============================================="
+            exit 1
+          }
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds
           cp build/plugins.json $GITHUB_WORKSPACE/builds
 
