@@ -2,6 +2,7 @@ package com.kick
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 
 class KickProvider : MainAPI() {
@@ -219,6 +220,19 @@ class KickProvider : MainAPI() {
         emptyList()
     }
 
+    private val cfKiller = CloudflareKiller()
+
+    private suspend fun getText(url: String): String? {
+        val plain = try { app.get(url, headers = headers) } catch (e: Exception) { null }
+        if (plain != null && plain.isSuccessful) return plain.text
+        val viaCf = try { app.get(url, headers = headers, interceptor = cfKiller) } catch (e: Exception) { null }
+        return viaCf?.takeIf { it.isSuccessful }?.text
+    }
+
+    private fun jsonField(text: String, key: String): String? =
+        Regex("\"$key\"\\s*:\\s*\"([^\"]+)\"").find(text)
+            ?.groupValues?.get(1)?.replace("\\/", "/")?.takeIf { it.startsWith("http") }
+
     // ---------- Links ----------
 
     override suspend fun loadLinks(
@@ -234,10 +248,8 @@ class KickProvider : MainAPI() {
 
             if (src == null) {
                 for (u in listOf("$mainUrl/api/v1/video/$uuid", "$mainUrl/api/v2/video/$uuid")) {
-                    val resp = try { app.get(u, headers = headers) } catch (e: Exception) { null } ?: continue
-                    src = resp.parsedSafe<VodSource>()?.source?.takeIf { it.isNotBlank() }
-                        ?: Regex("\"source\"\\s*:\\s*\"([^\"]+)\"").find(resp.text)
-                            ?.groupValues?.get(1)?.replace("\\/", "/")
+                    val text = getText(u) ?: continue
+                    src = jsonField(text, "source")
                     if (src != null) break
                 }
             }
@@ -263,16 +275,26 @@ class KickProvider : MainAPI() {
         }
 
         val slug = if (data.startsWith("live:")) data.removePrefix("live:") else slugFromUrl(data)
-        val channel = app.get("$mainUrl/api/v2/channels/$slug", headers = headers)
-            .parsedSafe<ChannelResponse>()
-        val m3u8 = channel?.playbackUrl?.takeIf { it.isNotBlank() } ?: return false
+        val m3u8 = jsonField(getText("$mainUrl/api/v2/channels/$slug/livestream").orEmpty(), "playback_url")
+            ?: jsonField(getText("$mainUrl/api/v2/channels/$slug").orEmpty(), "playback_url")
+            ?: return false
 
-        M3u8Helper.generateM3u8(
-            source = name,
-            streamUrl = m3u8,
-            referer = "$mainUrl/",
-            headers = headers
-        ).forEach(callback)
+        val links = try {
+            M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = headers)
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (links.isNotEmpty()) {
+            links.forEach(callback)
+        } else {
+            callback(
+                newExtractorLink(name, "$name Live", m3u8, ExtractorLinkType.M3U8) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.Unknown.value
+                    this.headers = this@KickProvider.headers
+                }
+            )
+        }
         return true
     }
 }
