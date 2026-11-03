@@ -168,12 +168,17 @@ class KickProvider : MainAPI() {
         }.trim()
 
         val vods = fetchVods(slug)
+        val vodId = vods.firstOrNull()?.let { it.video?.uuid ?: it.uuid }
+        val debug = buildString {
+            append(probe("$mainUrl/api/v2/channels/$slug/livestream", "playback_url"))
+            if (vodId != null) append(" | ").append(probe("$mainUrl/api/v1/video/$vodId", "source"))
+        }
         val poster = live?.thumbnail?.src ?: channel.user?.profilePic
 
         if (vods.isEmpty()) {
             return newLiveStreamLoadResponse(title, "$mainUrl/$slug", "live:$slug") {
                 this.posterUrl = poster
-                this.plot = plot
+                this.plot = plot + "\n\n[debug] " + debug
             }
         }
 
@@ -202,7 +207,7 @@ class KickProvider : MainAPI() {
 
         return newTvSeriesLoadResponse(title, "$mainUrl/$slug", TvType.TvSeries, episodes) {
             this.posterUrl = poster
-            this.plot = plot
+            this.plot = plot + "\n\n[debug] " + debug
         }
     }
 
@@ -221,6 +226,15 @@ class KickProvider : MainAPI() {
     }
 
     private val cfKiller = CloudflareKiller()
+
+    // TEMPORARY diagnostics: shows what Kick returns to the app
+    private suspend fun probe(url: String, key: String): String = try {
+        val r = app.get(url, headers = headers)
+        "${url.substringAfter("/api/")}: HTTP ${r.code}, found=${jsonField(r.text, key) != null}, " +
+                r.text.take(50).replace("\n", " ")
+    } catch (e: Exception) {
+        "${url.substringAfter("/api/")}: ${e.javaClass.simpleName} ${e.message?.take(60)}"
+    }
 
     private suspend fun getText(url: String): String? {
         val plain = try { app.get(url, headers = headers) } catch (e: Exception) { null }
