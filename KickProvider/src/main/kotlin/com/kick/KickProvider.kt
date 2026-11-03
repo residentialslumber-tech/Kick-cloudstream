@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.*
 class KickProvider : MainAPI() {
     override var mainUrl = "https://kick.com"
     override var name = "Kick"
-    override val supportedTypes = setOf(TvType.Live)
+    override val supportedTypes = setOf(TvType.Live, TvType.TvSeries)
     override var lang = "en"
     override val hasMainPage = true
     override val hasQuickSearch = false
@@ -66,6 +66,25 @@ class KickProvider : MainAPI() {
     )
 
     data class Category(@JsonProperty("name") val name: String? = null)
+
+    data class VodItem(
+        @JsonProperty("uuid") val uuid: String? = null,
+        @JsonProperty("video") val video: VodVideo? = null,
+        @JsonProperty("thumb") val thumb: String? = null,
+        @JsonProperty("created_at") val createdAt: String? = null,
+        @JsonProperty("livestream") val livestream: VodStream? = null
+    )
+
+    data class VodVideo(@JsonProperty("uuid") val uuid: String? = null)
+
+    data class VodStream(
+        @JsonProperty("session_title") val sessionTitle: String? = null,
+        @JsonProperty("duration") val duration: Long? = null,
+        @JsonProperty("created_at") val createdAt: String? = null,
+        @JsonProperty("thumbnail") val thumbnail: Any? = null
+    )
+
+    data class VodSource(@JsonProperty("source") val source: String? = null)
 
     data class SearchResponse2(
         @JsonProperty("channels") val channels: List<SearchChannel>? = null
@@ -142,10 +161,54 @@ class KickProvider : MainAPI() {
             channel.user?.bio?.takeIf { it.isNotBlank() }?.let { appendLine().append(it) }
         }.trim()
 
-        return newLiveStreamLoadResponse(title, "$mainUrl/$slug", "$mainUrl/$slug") {
-            this.posterUrl = live?.thumbnail?.src ?: channel.user?.profilePic
+        val vods = fetchVods(slug)
+        val poster = live?.thumbnail?.src ?: channel.user?.profilePic
+
+        if (vods.isEmpty()) {
+            return newLiveStreamLoadResponse(title, "$mainUrl/$slug", "live:$slug") {
+                this.posterUrl = poster
+                this.plot = plot
+            }
+        }
+
+        val episodes = ArrayList<Episode>()
+        if (live != null) {
+            episodes.add(newEpisode("live:$slug") {
+                this.name = "LIVE - ${live.sessionTitle ?: display}"
+                this.posterUrl = live.thumbnail?.src
+                this.episode = 0
+            })
+        }
+        vods.forEachIndexed { index, vod ->
+            val id = vod.video?.uuid ?: vod.uuid ?: return@forEachIndexed
+            val stream = vod.livestream
+            val date = (stream?.createdAt ?: vod.createdAt)?.take(10)
+            val label = stream?.sessionTitle?.takeIf { it.isNotBlank() } ?: "Broadcast"
+            episodes.add(newEpisode("vod:$id") {
+                this.name = if (date != null) "$date - $label" else label
+                this.posterUrl = thumbOf(stream?.thumbnail) ?: vod.thumb
+                this.episode = vods.size - index
+                this.runTime = stream?.duration?.let { (it / 60000).toInt() }
+            })
+        }
+
+        return newTvSeriesLoadResponse(title, "$mainUrl/$slug", TvType.TvSeries, episodes) {
+            this.posterUrl = poster
             this.plot = plot
         }
+    }
+
+    private fun thumbOf(t: Any?): String? = when (t) {
+        is String -> t
+        is Map<*, *> -> t["src"] as? String ?: t["url"] as? String
+        else -> null
+    }
+
+    private suspend fun fetchVods(slug: String): List<VodItem> = try {
+        app.get("$mainUrl/api/v2/channels/$slug/videos", headers = headers)
+            .parsedSafe<List<VodItem>>().orEmpty()
+    } catch (e: Exception) {
+        emptyList()
     }
 
     // ---------- Links ----------
@@ -156,7 +219,20 @@ class KickProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val slug = slugFromUrl(data)
+        if (data.startsWith("vod:")) {
+            val uuid = data.removePrefix("vod:")
+            val src = app.get("$mainUrl/api/v1/video/$uuid", headers = headers)
+                .parsedSafe<VodSource>()?.source?.takeIf { it.isNotBlank() } ?: return false
+            M3u8Helper.generateM3u8(
+                source = name,
+                streamUrl = src,
+                referer = "$mainUrl/",
+                headers = headers
+            ).forEach(callback)
+            return true
+        }
+
+        val slug = if (data.startsWith("live:")) data.removePrefix("live:") else slugFromUrl(data)
         val channel = app.get("$mainUrl/api/v2/channels/$slug", headers = headers)
             .parsedSafe<ChannelResponse>()
         val m3u8 = channel?.playbackUrl?.takeIf { it.isNotBlank() } ?: return false
