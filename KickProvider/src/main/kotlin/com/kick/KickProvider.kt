@@ -206,7 +206,7 @@ class KickProvider : MainAPI() {
 
     private suspend fun fetchVods(slug: String): List<VodItem> = try {
         app.get("$mainUrl/api/v2/channels/$slug/videos", headers = headers)
-            .parsedSafe<List<VodItem>>().orEmpty()
+            .parsedSafe<Array<VodItem>>()?.toList().orEmpty()
     } catch (e: Exception) {
         emptyList()
     }
