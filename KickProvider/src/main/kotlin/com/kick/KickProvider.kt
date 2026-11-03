@@ -171,6 +171,7 @@ class KickProvider : MainAPI() {
         val vodId = vods.firstOrNull()?.let { it.video?.uuid ?: it.uuid }
         val debug = buildString {
             append(probe("$mainUrl/api/v2/channels/$slug/livestream", "playback_url"))
+            append(" | ").append(probePlay(slug))
             if (vodId != null) append(" | ").append(probe("$mainUrl/api/v1/video/$vodId", "source"))
         }
         val poster = live?.thumbnail?.src ?: channel.user?.profilePic
@@ -230,10 +231,34 @@ class KickProvider : MainAPI() {
     // TEMPORARY diagnostics: shows what Kick returns to the app
     private suspend fun probe(url: String, key: String): String = try {
         val r = app.get(url, headers = headers)
-        "${url.substringAfter("/api/")}: HTTP ${r.code}, found=${jsonField(r.text, key) != null}, " +
-                r.text.take(50).replace("\n", " ")
+        val ok = jsonField(r.text, key) != null
+        "${url.substringAfter("/api/").take(22)}: ${r.code} ok=$ok" +
+                if (ok) "" else " " + r.text.take(40).replace("\n", " ")
     } catch (e: Exception) {
-        "${url.substringAfter("/api/")}: ${e.javaClass.simpleName} ${e.message?.take(60)}"
+        "${url.substringAfter("/api/").take(22)}: ${e.javaClass.simpleName} ${e.message?.take(50)}"
+    }
+
+    // TEMPORARY: runs the same steps as playback and reports where they break
+    private suspend fun probePlay(slug: String): String = try {
+        val m3u8 = jsonField(getText("$mainUrl/api/v2/channels/$slug/livestream").orEmpty(), "playback_url")
+        if (m3u8 == null) {
+            "play: no url"
+        } else {
+            val raw = try {
+                val r = app.get(m3u8, headers = streamHeaders)
+                "fetch=${r.code} ${r.text.take(25).replace("\n", " ")}"
+            } catch (e: Exception) {
+                "fetch=${e.javaClass.simpleName} ${e.message?.take(40)}"
+            }
+            val n = try {
+                M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = streamHeaders).size.toString()
+            } catch (e: Exception) {
+                "${e.javaClass.simpleName} ${e.message?.take(40)}"
+            }
+            "play: $raw links=$n"
+        }
+    } catch (e: Exception) {
+        "play: ${e.javaClass.simpleName} ${e.message?.take(50)}"
     }
 
     private suspend fun getText(url: String): String? {
