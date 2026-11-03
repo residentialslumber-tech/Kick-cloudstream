@@ -168,18 +168,12 @@ class KickProvider : MainAPI() {
         }.trim()
 
         val vods = fetchVods(slug)
-        val vodId = vods.firstOrNull()?.let { it.video?.uuid ?: it.uuid }
-        val debug = buildString {
-            append(probe("$mainUrl/api/v2/channels/$slug/livestream", "playback_url"))
-            append(" | ").append(probePlay(slug))
-            if (vodId != null) append(" | ").append(probe("$mainUrl/api/v1/video/$vodId", "source"))
-        }
         val poster = live?.thumbnail?.src ?: channel.user?.profilePic
 
         if (vods.isEmpty()) {
             return newLiveStreamLoadResponse(title, "$mainUrl/$slug", "live:$slug") {
                 this.posterUrl = poster
-                this.plot = plot + "\n\n[debug] " + debug
+                this.plot = plot
             }
         }
 
@@ -208,7 +202,7 @@ class KickProvider : MainAPI() {
 
         return newTvSeriesLoadResponse(title, "$mainUrl/$slug", TvType.TvSeries, episodes) {
             this.posterUrl = poster
-            this.plot = plot + "\n\n[debug] " + debug
+            this.plot = plot
         }
     }
 
@@ -228,39 +222,6 @@ class KickProvider : MainAPI() {
 
     private val cfKiller = CloudflareKiller()
 
-    // TEMPORARY diagnostics: shows what Kick returns to the app
-    private suspend fun probe(url: String, key: String): String = try {
-        val r = app.get(url, headers = headers)
-        val ok = jsonField(r.text, key) != null
-        "${url.substringAfter("/api/").take(22)}: ${r.code} ok=$ok" +
-                if (ok) "" else " " + r.text.take(40).replace("\n", " ")
-    } catch (e: Exception) {
-        "${url.substringAfter("/api/").take(22)}: ${e.javaClass.simpleName} ${e.message?.take(50)}"
-    }
-
-    // TEMPORARY: runs the same steps as playback and reports where they break
-    private suspend fun probePlay(slug: String): String = try {
-        val m3u8 = jsonField(getText("$mainUrl/api/v2/channels/$slug/livestream").orEmpty(), "playback_url")
-        if (m3u8 == null) {
-            "play: no url"
-        } else {
-            val raw = try {
-                val r = app.get(m3u8, headers = streamHeaders)
-                "fetch=${r.code} ${r.text.take(25).replace("\n", " ")}"
-            } catch (e: Exception) {
-                "fetch=${e.javaClass.simpleName} ${e.message?.take(40)}"
-            }
-            val n = try {
-                M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = streamHeaders).size.toString()
-            } catch (e: Exception) {
-                "${e.javaClass.simpleName} ${e.message?.take(40)}"
-            }
-            "play: $raw links=$n"
-        }
-    } catch (e: Exception) {
-        "play: ${e.javaClass.simpleName} ${e.message?.take(50)}"
-    }
-
     private suspend fun getText(url: String): String? {
         val plain = try { app.get(url, headers = headers) } catch (e: Exception) { null }
         if (plain != null && plain.isSuccessful) return plain.text
@@ -273,6 +234,12 @@ class KickProvider : MainAPI() {
             ?.groupValues?.get(1)?.replace("\\/", "/")?.takeIf { it.startsWith("http") }
 
     // ---------- Links ----------
+
+    // CloudStream may prefix our episode data with the site URL, so find the tag anywhere
+    private fun tagged(data: String, tag: String): String? {
+        val i = data.indexOf("$tag:")
+        return if (i >= 0) data.substring(i + tag.length + 1) else null
+    }
 
     private val streamHeaders = mapOf(
         "Referer" to "$mainUrl/",
@@ -308,8 +275,9 @@ class KickProvider : MainAPI() {
         data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.startsWith("vod:")) {
-            val body = data.removePrefix("vod:")
+        val vodBody = tagged(data, "vod")
+        if (vodBody != null) {
+            val body = vodBody
             val uuid = body.substringBefore("::")
             var src = body.substringAfter("::", "").takeIf { it.startsWith("http") }
 
@@ -341,7 +309,7 @@ class KickProvider : MainAPI() {
             return true
         }
 
-        val slug = if (data.startsWith("live:")) data.removePrefix("live:") else slugFromUrl(data)
+        val slug = tagged(data, "live") ?: slugFromUrl(data)
         val m3u8 = jsonField(getText("$mainUrl/api/v2/channels/$slug/livestream").orEmpty(), "playback_url")
             ?: jsonField(getText("$mainUrl/api/v2/channels/$slug").orEmpty(), "playback_url")
             ?: run { debugLink(callback, "no playback_url for $slug"); return true }
