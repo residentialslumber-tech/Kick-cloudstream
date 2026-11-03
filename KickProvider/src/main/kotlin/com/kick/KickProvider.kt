@@ -249,10 +249,38 @@ class KickProvider : MainAPI() {
 
     // ---------- Links ----------
 
+    private val streamHeaders = mapOf(
+        "Referer" to "$mainUrl/",
+        "Origin" to mainUrl,
+        "User-Agent" to headers["User-Agent"]!!
+    )
+
+    // TEMPORARY: surfaces failures as a visible link name instead of "No Links Found"
+    private suspend fun debugLink(callback: (ExtractorLink) -> Unit, msg: String) {
+        callback(newExtractorLink(name, "DEBUG: $msg", "https://kick.com/", ExtractorLinkType.VIDEO) {
+            this.referer = "$mainUrl/"
+        })
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean = try {
+        playLinks(data, callback)
+    } catch (e: Exception) {
+        debugLink(callback, "${e.javaClass.simpleName} ${e.message?.take(80)}")
+        true
+    }
+
+    private suspend fun playLinks(
+        data: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean = playLinksInner(data, callback)
+
+    private suspend fun playLinksInner(
+        data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         if (data.startsWith("vod:")) {
@@ -267,10 +295,10 @@ class KickProvider : MainAPI() {
                     if (src != null) break
                 }
             }
-            val url = src ?: return false
+            val url = src ?: run { debugLink(callback, "no VOD source for $uuid"); return true }
 
             val links = try {
-                M3u8Helper.generateM3u8(name, url, "$mainUrl/", headers = headers)
+                M3u8Helper.generateM3u8(name, url, "$mainUrl/", headers = streamHeaders)
             } catch (e: Exception) {
                 emptyList()
             }
@@ -281,7 +309,7 @@ class KickProvider : MainAPI() {
                     newExtractorLink(name, "$name VOD", url, ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
                         this.quality = Qualities.Unknown.value
-                        this.headers = this@KickProvider.headers
+                        this.headers = streamHeaders
                     }
                 )
             }
@@ -291,10 +319,10 @@ class KickProvider : MainAPI() {
         val slug = if (data.startsWith("live:")) data.removePrefix("live:") else slugFromUrl(data)
         val m3u8 = jsonField(getText("$mainUrl/api/v2/channels/$slug/livestream").orEmpty(), "playback_url")
             ?: jsonField(getText("$mainUrl/api/v2/channels/$slug").orEmpty(), "playback_url")
-            ?: return false
+            ?: run { debugLink(callback, "no playback_url for $slug"); return true }
 
         val links = try {
-            M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = headers)
+            M3u8Helper.generateM3u8(name, m3u8, "$mainUrl/", headers = streamHeaders)
         } catch (e: Exception) {
             emptyList()
         }
@@ -305,7 +333,7 @@ class KickProvider : MainAPI() {
                 newExtractorLink(name, "$name Live", m3u8, ExtractorLinkType.M3U8) {
                     this.referer = "$mainUrl/"
                     this.quality = Qualities.Unknown.value
-                    this.headers = this@KickProvider.headers
+                    this.headers = streamHeaders
                 }
             )
         }
