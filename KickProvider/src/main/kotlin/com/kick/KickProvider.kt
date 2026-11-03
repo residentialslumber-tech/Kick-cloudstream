@@ -70,12 +70,17 @@ class KickProvider : MainAPI() {
     data class VodItem(
         @JsonProperty("uuid") val uuid: String? = null,
         @JsonProperty("video") val video: VodVideo? = null,
-        @JsonProperty("thumb") val thumb: String? = null,
+        @JsonProperty("thumb") val thumb: Any? = null,
+        @JsonProperty("source") val source: String? = null,
         @JsonProperty("created_at") val createdAt: String? = null,
         @JsonProperty("livestream") val livestream: VodStream? = null
     )
 
-    data class VodVideo(@JsonProperty("uuid") val uuid: String? = null)
+    data class VodVideo(
+        @JsonProperty("uuid") val uuid: String? = null,
+        @JsonProperty("thumb") val thumb: Any? = null,
+        @JsonProperty("source") val source: String? = null
+    )
 
     data class VodStream(
         @JsonProperty("session_title") val sessionTitle: String? = null,
@@ -184,9 +189,11 @@ class KickProvider : MainAPI() {
             val stream = vod.livestream
             val date = (stream?.createdAt ?: vod.createdAt)?.take(10)
             val label = stream?.sessionTitle?.takeIf { it.isNotBlank() } ?: "Broadcast"
-            episodes.add(newEpisode("vod:$id") {
+            val src = vod.source ?: vod.video?.source
+            episodes.add(newEpisode("vod:$id::${src.orEmpty()}") {
                 this.name = if (date != null) "$date - $label" else label
-                this.posterUrl = thumbOf(stream?.thumbnail) ?: vod.thumb
+                this.posterUrl = thumbOf(stream?.thumbnail) ?: thumbOf(vod.video?.thumb)
+                    ?: thumbOf(vod.thumb) ?: poster
                 this.episode = vods.size - index
                 this.runTime = stream?.duration?.let { (it / 60000).toInt() }
             })
@@ -200,7 +207,8 @@ class KickProvider : MainAPI() {
 
     private fun thumbOf(t: Any?): String? = when (t) {
         is String -> t
-        is Map<*, *> -> t["src"] as? String ?: t["url"] as? String
+        is Map<*, *> -> (t["src"] as? String) ?: (t["url"] as? String)
+            ?: (t["srcset"] as? String)?.substringBefore(" ")?.takeIf { it.startsWith("http") }
         else -> null
     }
 
@@ -220,15 +228,37 @@ class KickProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         if (data.startsWith("vod:")) {
-            val uuid = data.removePrefix("vod:")
-            val src = app.get("$mainUrl/api/v1/video/$uuid", headers = headers)
-                .parsedSafe<VodSource>()?.source?.takeIf { it.isNotBlank() } ?: return false
-            M3u8Helper.generateM3u8(
-                source = name,
-                streamUrl = src,
-                referer = "$mainUrl/",
-                headers = headers
-            ).forEach(callback)
+            val body = data.removePrefix("vod:")
+            val uuid = body.substringBefore("::")
+            var src = body.substringAfter("::", "").takeIf { it.startsWith("http") }
+
+            if (src == null) {
+                for (u in listOf("$mainUrl/api/v1/video/$uuid", "$mainUrl/api/v2/video/$uuid")) {
+                    val resp = try { app.get(u, headers = headers) } catch (e: Exception) { null } ?: continue
+                    src = resp.parsedSafe<VodSource>()?.source?.takeIf { it.isNotBlank() }
+                        ?: Regex("\"source\"\\s*:\\s*\"([^\"]+)\"").find(resp.text)
+                            ?.groupValues?.get(1)?.replace("\\/", "/")
+                    if (src != null) break
+                }
+            }
+            val url = src ?: return false
+
+            val links = try {
+                M3u8Helper.generateM3u8(name, url, "$mainUrl/", headers = headers)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            if (links.isNotEmpty()) {
+                links.forEach(callback)
+            } else {
+                callback(
+                    newExtractorLink(name, "$name VOD", url, ExtractorLinkType.M3U8) {
+                        this.referer = "$mainUrl/"
+                        this.quality = Qualities.Unknown.value
+                        this.headers = this@KickProvider.headers
+                    }
+                )
+            }
             return true
         }
 

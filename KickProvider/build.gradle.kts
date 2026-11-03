@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 3
+version = 4
 
 cloudstream {
     description = "Watch live streams from Kick.com"
@@ -14,7 +14,7 @@ cloudstream {
      **/
     status = 1
 
-    tvTypes = listOf("Live")
+    tvTypes = listOf("Live", "TvSeries")
 
     requiresResources = false
     language = "en"
